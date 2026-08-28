@@ -1,0 +1,15 @@
+{
+  "nc_file": "../examples/generated/synthetic_sonar.nc",
+  "motion_file": "../examples/generated/synthetic_motion.csv",
+  "output_root": "../examples/generated/output",
+  "timezone": "UTC",
+  "start_ping": 0,
+  "end_ping": 11,
+  "ping_step": 1,
+  "grid_range_mode": "fixed",
+  "grid_range_max": 15.0,
+  "binary_tuning_ping_step": 3,
+  "binary_tuning_workers": 1,
+  "no_process_figures": true,
+  "no_gray_figures": true
+}

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imaging-sonar-sea-ice-draft"
+version = "1.0.0"
+description = "Oculus NetCDF preprocessing and sea-ice draft reconstruction from upward-looking 2D imaging sonar"
+readme = "README.md"
+authors = [{name = "Liyibo"}]
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.0",
+  "xarray>=2024.1",
+  "scipy>=1.11",
+  "matplotlib>=3.8",
+  "scikit-image>=0.22",
+  "netCDF4>=1.6",
+]
+
+[project.optional-dependencies]
+oculus = [
+  "oculus-python==0.0.2a1",
+  "numpy>=1.26,<2",
+  "opencv-python<4.12",
+]
+
+[project.scripts]
+imaging-sonar-ice-draft = "ice_sonar_pipeline.sonar_draft_pipeline:main"
+oculus-to-netcdf = "ice_sonar_pipeline.oculus_to_netcdf:main"
+
+[tool.setuptools]
+packages = ["ice_sonar_pipeline"]
