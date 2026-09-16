@@ -11,6 +11,8 @@ from matplotlib.patches import Patch
 import numpy as np
 from scipy.signal import find_peaks
 
+from .parameters import parameters_for
+
 DENOISING_MODULE_DIR = Path(__file__).resolve().parent
 ANNULAR_TRIGGER_SCORE = 0.24
 
@@ -21,7 +23,13 @@ def install_gray_denoising(ns: dict) -> None:
         sys.path.insert(0, str(DENOISING_MODULE_DIR))
     from . import denoise_line_utils as s2
 
-    ns["CANDIDATE_CONFIGS"] = [dict(s2.DEFAULT_GRAY_CONFIG)]
+    parameters = parameters_for(ns)
+    for key, value in parameters["denoising"].items():
+        constant = key.upper()
+        if not hasattr(s2, constant):
+            raise ValueError(f"Denoising setting has no implementation: {key}")
+        setattr(s2, constant, value)
+    ns["CANDIDATE_CONFIGS"] = [dict(parameters["gray"], name="initial_gray")]
     ns["GRAY_DENOISING_ENABLED"] = True
 
     def _axis_resolution(y_axis: np.ndarray, z_axis: np.ndarray) -> float:
@@ -65,7 +73,7 @@ def install_gray_denoising(ns: dict) -> None:
         out = np.asarray(cleaned, dtype=float).copy()
         combined = np.asarray(suppress_mask, dtype=float).copy()
 
-        for _ in range(2):
+        for _ in range(parameters["guidance"]["iterations"]):
             below_mask, _ = s2.build_below_ice_non_target_mask(valid_mask, y_axis, z_axis, line_y, line_z, line_status)
             above_mask, _ = s2.build_above_ice_multipath_mask(valid_mask, y_axis, z_axis, line_y, line_z, line_status)
             if np.any(below_mask):
@@ -93,7 +101,7 @@ def install_gray_denoising(ns: dict) -> None:
 
         y_grid, z_grid = np.meshgrid(y_axis, z_axis)
         annular = s2.annular_residual_metrics(out, np.hypot(y_grid, z_grid), y_axis, z_grid, valid_mask, line_y, line_z)
-        if annular.get("annular_score", 0.0) >= ANNULAR_TRIGGER_SCORE and len(line_y) >= 3:
+        if annular.get("annular_score", 0.0) >= parameters["guidance"]["annular_trigger_score"] and len(line_y) >= 3:
             out = s2.secondary_annular_suppression(out, np.hypot(y_grid, z_grid), y_axis, z_grid, valid_mask, line_y, line_z)
             score_map, selected_labels, selected_component, line_y, line_z, line_status, observed_fraction, center_z = _candidate_line(
                 out,
@@ -119,7 +127,7 @@ def install_gray_denoising(ns: dict) -> None:
     def prepare_noise_suppression(linear_image, valid_mask, y_axis, z_axis):
         y_grid, z_grid = np.meshgrid(y_axis, z_axis)
         r_grid = np.hypot(y_grid, z_grid)
-        adaptive_image, adaptive_meta = s2.adaptive_range_threshold(linear_image, r_grid, valid_mask)
+        adaptive_image, adaptive_meta = s2.adaptive_range_threshold(linear_image, r_grid, valid_mask, **parameters["background"])
         context = s2.build_noise_context(adaptive_image, valid_mask, y_axis, z_axis)
         context["initial_projection_score"] = context["projection_score"]
         context["initial_projection_smooth"] = context["projection_smooth"]

@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README_CN.md)
 
-> Last updated: 2026-08-28
+> Last updated: 2026-09-16
 
 **Version 1.0.0**
 
@@ -13,8 +13,10 @@ and vehicle attitude data.
 
 ## Scope
 
-This repository provides the general algorithmic framework, processing
-workflow, and implementation required to understand and reproduce the method.
+This repository provides a general processing framework and a runnable
+reference implementation for upward-looking 2D imaging sonar. Its configurable
+initial parameters illustrate the workflow; they are not universal thresholds
+or a complete reproduction package for any particular survey.
 It does not contain field sonar data, navigation records, manual annotations,
 or formal research products. The repository is a self-contained public-release
 copy and does not read from or modify any external research workspace.
@@ -145,6 +147,7 @@ python run_pipeline.py \
   --nc-file path/to/sonar.nc \
   --motion-file path/to/auv_motion.csv \
   --output-root outputs/example \
+  --algorithm-config config/initial_parameters.json \
   --timezone UTC \
   --ping-step 5 \
   --grid-range-mode metadata \
@@ -158,8 +161,9 @@ python run_pipeline.py --help
 ```
 
 Relative output paths are resolved from the current working directory. The
-default single-process parameter search is recommended for reproducible and
-auditable runs.
+default uses explicit initial parameters without an automatic parameter search.
+Optional tuning is enabled with `selection.mode: "tune"` in the algorithm JSON;
+its ranges are configurable. Previous run caches never override current settings.
 
 ## JSON configuration
 
@@ -171,6 +175,35 @@ python run_from_config.py --config config/example_run.json
 
 Relative paths in the JSON file are resolved from the directory containing the
 configuration file.
+
+## Adjustable initial parameters
+
+Edit [`config/initial_parameters.json`](config/initial_parameters.json), or supply
+a smaller JSON file containing only the values you want to override. Run-file
+paths and algorithm settings are separate: `algorithm_config` in
+`config/example_run.json` selects the algorithm file. Direct CLI users can pass
+`--algorithm-config path/to/settings.json`. Omitted values use built-in initial
+settings. Unknown keys and invalid values are rejected.
+
+Settings cover mapping and beam order, background estimation, artifact
+suppression, candidate thresholds and geometry, spatial gap limits, attitude
+signs, center statistics, and optional temporal postprocessing. Each run saves
+`effective_config.json` with all settings and the selected candidate parameters.
+See [`docs/PARAMETERS.md`](docs/PARAMETERS.md) for groups, units and examples.
+
+**Confirm your sonar coordinate system before interpreting results.** This
+implementation uses a right-handed sonar frame: **x forward, y port, z upward**.
+The body frame is **x forward, y starboard, z down**. Verify beam-column ordering,
+angle units and signs, mounting orientation, clock synchronization, range/sound
+speed calibration, and the depth reference for your own equipment. Initial
+values are assumptions to check, not a calibration certificate. See
+[`docs/COORDINATES.md`](docs/COORDINATES.md).
+
+Temporal interpolation and smoothing are configurable optional postprocessing.
+Users should choose them according to data quality, sampling interval and gap
+duration. The raw `ice_draft_m` column is retained. The supplied settings retain
+the existing postprocessing behavior; set `postprocess.enabled` to `false` to
+disable it, or set a finite `postprocess.max_gap_s` to limit supported gap filling.
 
 ## Synthetic smoke test
 

@@ -4,9 +4,13 @@ Backward mapping utilities for Oculus imaging-sonar NetCDF frames.
 
 Coordinate convention used in this analysis:
 
-- x_s: vertical-aperture direction, approximately along AUV motion.
-- y_s: lateral direction, positive to the sonar/AUV right side.
-- z_s: center-beam forward direction for the upward-looking sonar.
+- x_s: vehicle-forward direction (unresolved aperture direction).
+- y_s: positive toward port.
+- z_s: positive upward along the nominal center beam.
+
+This is a right-handed sonar frame. The body frame is forward/starboard/down.
+Verify the actual installation, beam ordering and attitude conventions before
+using this approximation; the software cannot infer physical calibration.
 
 The NetCDF image is a polar/fan frame, not a Cartesian image. For each ping,
 ``backscatter(sample, beam)`` is mapped onto a regular y_s-z_s grid by
@@ -49,6 +53,7 @@ class SonarGridConfig:
     azimuth_half_angle_deg: float = 65.0
     vertical_aperture_deg: float = 20.0
     interpolation: InterpolationMode = "linear"
+    beam_order: str = "starboard_to_port"
     outside_value: float = np.nan
 
     @property
@@ -170,15 +175,15 @@ def source_axes_from_metadata(
 
     Range centers use ``(i + 0.5) * sample_size`` so interpolation is consistent
     with sample-bin centers. Beam centers are spread across the available
-    azimuth range from left to right.
+    azimuth range from negative y_s (starboard) to positive y_s (port).
+    Source columns are reversed during mapping if their declared order differs.
     """
     n_sample = int(metadata["n_sample"])
     n_beam = int(metadata["n_beam"])
     sample_size = float(metadata["sample_size_m"])
 
     azimuth_range_rad = float(metadata["azimuth_range_rad"])
-    if config is not None:
-        azimuth_range_rad = min(azimuth_range_rad, config.azimuth_range_rad)
+    # A smaller output fan crops source bearings; it must not compress them.
 
     range_centers = (np.arange(n_sample, dtype=float) + 0.5) * sample_size
     if n_beam <= 1:
@@ -202,6 +207,10 @@ def backward_map_ping_center_plane(
     if image_sample_beam.ndim != 2:
         raise ValueError(f"Expected a 2D image, got shape={image_sample_beam.shape}")
 
+    if config.beam_order == "port_to_starboard":
+        image_sample_beam = image_sample_beam[:, ::-1]
+    elif config.beam_order != "starboard_to_port":
+        raise ValueError("Unknown beam_order; verify the source column orientation")
     y_grid, z_grid, y_axis, z_axis = make_yz_grid(config)
     range_m = np.hypot(y_grid, z_grid)
     theta_rad = np.arctan2(y_grid, z_grid)
@@ -244,7 +253,7 @@ def backward_map_ping_center_plane(
             "usable_range_max_m": usable_range_max,
             "grid_resolution_m": float(config.grid_resolution_m),
             "vertical_aperture_deg": float(config.vertical_aperture_deg),
-            "coordinate_frame": "x_s vertical aperture/along-track, y_s right, z_s center-beam forward",
+            "coordinate_frame": "right-handed: x_s forward, y_s port, z_s upward",
             "mapping_plane": "center plane phi=0, output image axes are z_s rows and y_s columns",
         },
     }

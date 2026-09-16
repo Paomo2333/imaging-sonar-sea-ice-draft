@@ -1,6 +1,6 @@
 # Public-release check
 
-> Check date: 2026-08-28
+> Latest local check: 2026-09-16
 
 Release: **1.0.0**
 
@@ -25,7 +25,21 @@ Release: **1.0.0**
   dataset/version labels;
 - caches, temporary files, local configurations, and archives.
 
-## Verification completed
+## Current local verification (2026-09-16)
+
+- Python syntax and CLI help passed in the existing Python 3.10 environment.
+- Fifteen unit tests passed, covering conversion wrappers, coordinate geometry,
+  beam reversal, aperture cropping, parameter validation/propagation, preserved
+  center support defaults, and optional or time-bounded postprocessing.
+- A 12-ping synthetic run completed with the fixed initial configuration.
+- A 3-ping run with changed thresholds, grid, beam order and roll sign completed;
+  disabling postprocessing preserved raw draft values in the processed column.
+- A 3-ping run with two tuning workers completed using the supplied overrides.
+- No field observations or real raw-log conversion were used for these checks.
+- This update was checked in an existing environment; the clean installation
+  results below belong to the earlier release and were not repeated.
+
+## Historical release verification (2026-08-28)
 
 - editable installation with the `oculus` extra passed in a newly created
   Python 3.10.20 virtual environment;

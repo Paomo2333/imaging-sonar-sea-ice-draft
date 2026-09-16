@@ -11,6 +11,7 @@ from pathlib import Path
 
 VALUE_OPTIONS = {
     "nc_file": "--nc-file",
+    "algorithm_config": "--algorithm-config",
     "motion_file": "--motion-file",
     "output_root": "--output-root",
     "timezone": "--timezone",
@@ -36,7 +37,7 @@ FLAG_OPTIONS = {
     "force_retune": "--force-retune",
 }
 
-PATH_KEYS = {"nc_file", "motion_file", "output_root", "manual_mask_json"}
+PATH_KEYS = {"nc_file", "motion_file", "output_root", "manual_mask_json", "algorithm_config"}
 
 
 def main() -> None:

@@ -1,67 +1,53 @@
 # Method overview
 
-This repository implements a center-plane, per-ping reconstruction workflow
-for upward-looking two-dimensional imaging sonar.
-
-Raw Blueprint Subsea Oculus logs may first be exported to NetCDF4 through the
-external `oculus-python` command-line tool. That file-format conversion is an
-input preprocessing step rather than part of the ice-bottom extraction
-algorithm described below.
+This repository illustrates a general center-plane processing workflow for
+upward-looking two-dimensional imaging sonar. It is a runnable reference
+implementation with adjustable initial parameters, not a complete survey-specific
+reproduction package. Users supply and validate their own observations.
 
 ## Processing sequence
 
-1. **Polar-to-Cartesian mapping**
+1. **Geometry and mapping.** Convert calibrated range/bearing samples to a regular
+   lateral/upward grid by backward bilinear mapping. Initial spacing is 0.05 m.
+   This is a numerical grid interval, not a measurement-accuracy specification.
+   Beam order, range scale, aperture, resolution and interpolation are configurable.
+2. **Range-dependent background.** Initial range bins are 0.25 m, with lower/upper
+   percentiles 35/74 and a spread coefficient of 0.55. Missing bin estimates are
+   interpolated. `smooth_bins=5` corresponds to Gaussian sigma 5/3 bins under
+   the current implementation. Positive residuals are normalized by Q99.
+3. **Artifact suppression.** Geometric and intensity criteria suppress narrow
+   central artifacts and lower lobe-like responses. A preliminary guidance curve
+   protects plausible interface support during iterative refinement. It is not
+   the final boundary used for draft. Parameters are grouped in the JSON file.
+4. **Candidate detection.** A normalized projection combines echo energy and
+   strong-pixel support with initial weights 0.65/0.35. Its dominant peak anchors
+   an initial window extending 1.20 m downward and 0.60 m upward. Local per-ping
+   intensity thresholds use initial percentiles 86/66, followed by morphology,
+   connected-component screening and echo-supported mask bridges. The initial
+   component area/span settings are 0.030 m² and 0.65 m. Optional tuning searches
+   user-defined ranges; the default applies fixed initial settings.
+5. **Representative boundary.** At each lateral column, candidate pixels define
+   an intensity-weighted mean elevation. Short curve gaps are interpolated only
+   within configurable horizontal/vertical limits (initially 0.60/0.35 m).
+   Mask bridging and final curve interpolation are separate operations.
+6. **Attitude and draft.** Follow the right-handed conventions in
+   [COORDINATES.md](COORDINATES.md), apply roll/pitch correction and subtract the
+   upward range from AUV depth. Initial center statistics use a 0.50 m half-window
+   and a weighted median. The existing support rule is retained: fewer than five
+   center points triggers a nearest-point fallback of up to nine points, which
+   may extend outside the window. `center_method` identifies this in the output.
+7. **Optional postprocessing.** Users may adjust or disable temporal QC,
+   interpolation and smoothing according to their own data quality. Raw and
+   processed draft columns are separate; effective settings are saved per run.
 
-   Each sonar frame is represented by echo intensity as a function of slant
-   range and azimuth. Target pixels on a regular lateral–vertical grid are
-   mapped back to fractional range and beam indices and evaluated by bilinear
-   interpolation. The default grid spacing is 0.05 m.
+## Interpretation boundary
 
-2. **Range-adaptive background suppression**
+Two-dimensional sonar resolves range and in-plane bearing but not the individual
+arrival angle within its out-of-plane aperture. Returns are approximated as
+lying on the center plane. This estimates representative near-track sea-ice
+draft; it does not recover a complete 3D underside or total ice thickness.
+Complex or vertically dispersed returns require further methodological study
+and independent validation. QC scores are review aids, not calibrated uncertainty.
 
-   Valid pixels are grouped in 0.15 m slant-range bins. Local 25th and 75th
-   percentiles characterize the range-dependent background and intensity
-   spread. The resulting threshold curve is smoothed before being mapped back
-   to the image grid.
-
-3. **Structured-artifact suppression**
-
-   The implementation identifies and attenuates a narrow central-beam artifact
-   and compact lobe-shaped responses below the candidate ice band. These masks
-   are based on image geometry and intensity contrast; they do not assign a
-   unique physical origin to the artifacts.
-
-4. **Candidate ice-band detection**
-
-   A vertical projection combines normalized echo energy and strong-pixel
-   coverage with weights 0.65 and 0.35. Its principal peak limits the local
-   search window. Hysteresis-style thresholding, connected-component filters,
-   and light morphology produce the candidate ice-bottom region.
-
-5. **Representative boundary extraction**
-
-   At each lateral grid position, the representative vertical coordinate is
-   calculated from the intensity-weighted candidate pixels. Only short gaps
-   satisfying horizontal-span and vertical-continuity constraints are bridged;
-   longer unsupported intervals remain missing.
-
-6. **Attitude correction and draft calculation**
-
-   The extracted boundary is corrected using synchronized AUV roll and pitch.
-   A robust statistic within the central lateral window provides the upward
-   vertical range. Sea-ice draft is then estimated as AUV depth minus this
-   vertical range. Quality-control fields retain geometric support, temporal
-   residuals, and review-priority indicators.
-
-## Method boundary
-
-The sonar resolves range and azimuth within its fan-shaped imaging plane but
-does not resolve arrival angle within the non-imaging aperture. Echoes are
-therefore projected onto the center plane. The method reconstructs an
-along-track series of representative sea-ice draft; it is not a complete
-three-dimensional reconstruction of the ice underside and does not estimate
-total sea-ice thickness.
-
-Parameter values are research defaults rather than universal constants. They
-should be evaluated for the sonar model, operating range, environment, and
-signal-to-noise characteristics of each new dataset.
+All initial values should be assessed for the user's sensor, operating range,
+ice morphology and signal quality. See [PARAMETERS.md](PARAMETERS.md).

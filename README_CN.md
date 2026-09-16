@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README_CN.md)
 
-> 更新日期：2026-08-28
+> 更新日期：2026-09-16
 
 **Version 1.0.0**
 
@@ -14,7 +14,7 @@ AUV motion data.
 
 ## 项目定位
 
-本项目公开的是通用算法思路、处理流程和必要实现代码，不包含任何现场原始数据、导航记录、人工标注或正式科研结果。当前目录是独立整理的 GitHub 发布副本，不会读取或修改其他科研工作目录。
+本项目公开通用的成像声呐处理思路、基础流程和可运行的参考实现。仓库参数为可调整的初始值，不代表适合所有声呐和观测环境，也不构成特定航次研究结果的完整复现包。项目不包含任何现场原始数据、导航记录、人工标注或正式科研结果。当前目录是独立整理的 GitHub 发布副本，不会读取或修改其他科研工作目录。
 
 当前输入适配器重点面向 `oculus-python` 导出的 Oculus NetCDF 数据结构。其他二维成像声呐可以复用核心算法，但需要先将回波矩阵、时间及采样几何信息适配至 [`docs/INPUT_FORMAT.md`](docs/INPUT_FORMAT.md) 规定的接口。仓库对 `.oculus` 文件的解析依赖外部项目 [`oculus-python`](https://gitlab.gbar.dtu.dk/fletho/oculus-python)，并不包含该库的源码。
 
@@ -118,6 +118,7 @@ python run_pipeline.py \
   --nc-file path/to/sonar.nc \
   --motion-file path/to/auv_motion.csv \
   --output-root outputs/example \
+  --algorithm-config config/initial_parameters.json \
   --timezone UTC \
   --ping-step 5 \
   --grid-range-mode metadata \
@@ -130,7 +131,7 @@ python run_pipeline.py \
 python run_pipeline.py --help
 ```
 
-相对输出路径以当前工作目录为基准。默认使用单进程参数选择，以便获得更稳定、可复核的结果。
+相对输出路径以当前工作目录为基准。默认直接使用明确的初始参数，不自动搜索参数。需要调优时，在算法配置中设置 `selection.mode: "tune"` 并调整搜索范围；历史缓存不会覆盖当前设置。
 
 ## 使用 JSON 配置
 
@@ -141,6 +142,16 @@ python run_from_config.py --config config/example_run.json
 ```
 
 配置文件中的相对路径以配置文件所在目录为基准。
+
+## 初始参数与用户调整
+
+算法参数集中在 [`config/initial_parameters.json`](config/initial_parameters.json)。可以直接修改，也可以另写只包含需要覆盖字段的小型 JSON。运行配置 [`config/example_run.json`](config/example_run.json) 通过 `algorithm_config` 指向算法文件；直接运行时使用 `--algorithm-config path/to/settings.json`。省略的字段使用内置初始值，未知字段或无效数值会报错。
+
+可调设置涵盖网格及声束顺序、背景估计、伪影抑制、候选区域及分割阈值、空间补洞、姿态符号、中心统计和可选时间后处理。每次运行输出 `effective_config.json`，记录全部参数及最终选择的候选配置。分组、单位和示例见 [`docs/PARAMETERS.md`](docs/PARAMETERS.md)。
+
+**使用前应仔细确定自己的声呐坐标系及安装关系。** 仓库使用右手声呐坐标系：**x 向前、y 向左舷、z 向上**；艇体坐标系为 **x 向前、y 向右舷、z 向下**。使用者必须确认输入声束排列、角度单位与正负号、安装方向、声呐与导航时间同步、声速/距离标定以及深度参考面。初始设置不能替代设备标定，也不能仅凭曲线是否平滑判断坐标是否正确。详见 [`docs/COORDINATES.md`](docs/COORDINATES.md)。
+
+时间补值和平滑属于可选后处理，应由使用者根据数据质量、采样间隔及缺口长度合理设置。原始吃水列 `ice_draft_m` 始终保留。初始配置沿用现有后处理行为；设置 `postprocess.enabled: false` 可关闭，或设置有限的 `postprocess.max_gap_s` 约束补洞。
 
 ## 合成数据自检
 

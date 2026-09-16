@@ -7,6 +7,8 @@ from matplotlib.colors import ListedColormap
 from matplotlib.patches import Patch
 import numpy as np
 
+from .parameters import parameters_for
+
 BINARY_MIN_WINDOW_DOWN_M = 1.20
 BINARY_MIN_WINDOW_UP_M = 0.60
 BINARY_EDGE_EXTENSION_DOWN_M = 1.70
@@ -26,11 +28,10 @@ BINARY_LINE_CONNECT_MAX_Y_M = 0.60
 def install_binary_band_refinement(ns: dict) -> None:
     """Refine binary ice-band extraction after gray-stage denoising."""
 
+    refinement = parameters_for(ns)["binary_refinement"]
+
     def _effective_config(config: dict) -> dict:
-        effective = dict(config)
-        effective["window_down_m"] = max(float(effective["window_down_m"]), BINARY_MIN_WINDOW_DOWN_M)
-        effective["window_up_m"] = max(float(effective["window_up_m"]), BINARY_MIN_WINDOW_UP_M)
-        return effective
+        return dict(config)
 
     def _left_rescue_meta(final_mask: np.ndarray, cleaned: np.ndarray, y_axis: np.ndarray, z_axis: np.ndarray, ice_z_m: float) -> dict:
         meta = ns["binary_empty_left_rescue_meta"](final_mask.shape)
@@ -50,6 +51,7 @@ def install_binary_band_refinement(ns: dict) -> None:
         ice_z_m: float,
         threshold_low: float,
         side: str,
+        window_up_m: float,
     ) -> np.ndarray:
         curve_z, _ = ns["binary_extract_curve"](final_mask, cleaned, y_axis, z_axis)
         active_cols = np.flatnonzero(np.isfinite(curve_z))
@@ -58,8 +60,8 @@ def install_binary_band_refinement(ns: dict) -> None:
             return extension
 
         dz = float(abs(np.nanmean(np.diff(z_axis))))
-        half_width_px = ns["meters_to_pixels"](BINARY_EDGE_EXTENSION_HALF_WIDTH_M, dz, minimum=1)
-        min_intensity = max(0.35, min(float(threshold_low), 0.90 * float(threshold_low)))
+        half_width_px = ns["meters_to_pixels"](refinement["edge_extension_half_width_m"], dz, minimum=1)
+        min_intensity = max(refinement["edge_min_intensity"], min(float(threshold_low), refinement["edge_threshold_scale"] * float(threshold_low)))
         if side == "left":
             start_col = int(active_cols.min())
             col_iter = range(start_col - 1, -1, -1)
@@ -71,14 +73,14 @@ def install_binary_band_refinement(ns: dict) -> None:
         misses = 0
 
         for col in col_iter:
-            if abs(float(y_axis[col]) - start_y) > BINARY_EDGE_EXTENSION_MAX_Y_M:
+            if abs(float(y_axis[col]) - start_y) > refinement["edge_extension_max_y_m"]:
                 break
             col_valid = (
                 valid_mask[:, col]
                 & np.isfinite(cleaned[:, col])
-                & (z_axis >= ice_z_m - BINARY_EDGE_EXTENSION_DOWN_M)
-                & (z_axis <= ice_z_m + BINARY_MIN_WINDOW_UP_M)
-                & (np.abs(z_axis - previous_z) <= BINARY_EDGE_EXTENSION_STEP_Z_M)
+                & (z_axis >= ice_z_m - refinement["edge_extension_down_m"])
+                & (z_axis <= ice_z_m + window_up_m)
+                & (np.abs(z_axis - previous_z) <= refinement["edge_extension_step_z_m"])
             )
             rows = np.flatnonzero(col_valid)
             if rows.size == 0:
@@ -96,7 +98,7 @@ def install_binary_band_refinement(ns: dict) -> None:
                     misses = 0
                 else:
                     misses += 1
-            if misses >= BINARY_EDGE_EXTENSION_MAX_MISSES:
+            if misses >= refinement["edge_extension_max_misses"]:
                 break
         return extension
 
@@ -116,10 +118,10 @@ def install_binary_band_refinement(ns: dict) -> None:
             return bridge_mask
 
         dz = float(abs(np.nanmean(np.diff(z_axis))))
-        half_width_px = ns["meters_to_pixels"](BINARY_MASK_BRIDGE_HALF_WIDTH_M, dz, minimum=1)
+        half_width_px = ns["meters_to_pixels"](refinement["mask_bridge_half_width_m"], dz, minimum=1)
         support_floor = max(
-            BINARY_MASK_BRIDGE_SUPPORT_MIN,
-            BINARY_MASK_BRIDGE_SUPPORT_SCALE * float(threshold_low),
+            refinement["mask_bridge_support_min"],
+            refinement["mask_bridge_support_scale"] * float(threshold_low),
         )
 
         for left_col, right_col in zip(active_cols[:-1], active_cols[1:]):
@@ -127,7 +129,7 @@ def install_binary_band_refinement(ns: dict) -> None:
                 continue
             gap_y_m = float(abs(y_axis[right_col] - y_axis[left_col]))
             gap_z_m = float(abs(curve_z[right_col] - curve_z[left_col]))
-            if gap_y_m > BINARY_GAP_CONNECT_MAX_Y_M or gap_z_m > BINARY_GAP_CONNECT_MAX_Z_M:
+            if gap_y_m > refinement["gap_connect_max_y_m"] or gap_z_m > refinement["gap_connect_max_z_m"]:
                 continue
 
             fill_cols = np.arange(left_col + 1, right_col, dtype=int)
@@ -155,7 +157,7 @@ def install_binary_band_refinement(ns: dict) -> None:
                 candidate_rows.append((row0, row1, int(col)))
 
             support_fraction = supported_cols / max(fill_cols.size, 1)
-            if support_fraction < BINARY_MASK_BRIDGE_SUPPORT_FRACTION:
+            if support_fraction < refinement["mask_bridge_support_fraction"]:
                 continue
 
             for row0, row1, col in candidate_rows:
@@ -164,7 +166,7 @@ def install_binary_band_refinement(ns: dict) -> None:
         bridge_mask &= valid_mask & np.isfinite(cleaned) & (~final_mask)
         return bridge_mask
 
-    def refined_binary_interpolate_short_gaps(curve_z, y_axis, max_gap_m=BINARY_LINE_CONNECT_MAX_Y_M):
+    def refined_binary_interpolate_short_gaps(curve_z, y_axis, max_gap_m=refinement["line_connect_max_y_m"]):
         """Connect measured curve gaps only when horizontal and vertical jumps are both small."""
         curve_z = np.asarray(curve_z, dtype=float)
         y_axis = np.asarray(y_axis, dtype=float)
@@ -179,7 +181,7 @@ def install_binary_band_refinement(ns: dict) -> None:
                 continue
             gap_y_m = float(abs(y_axis[right_col] - y_axis[left_col]))
             gap_z_m = float(abs(curve_z[right_col] - curve_z[left_col]))
-            if gap_y_m > max_gap_m or gap_z_m > BINARY_GAP_CONNECT_MAX_Z_M:
+            if gap_y_m > max_gap_m or gap_z_m > refinement["line_connect_max_z_m"]:
                 continue
             fill_cols = np.arange(left_col + 1, right_col, dtype=int)
             out[fill_cols] = np.interp(
@@ -205,7 +207,7 @@ def install_binary_band_refinement(ns: dict) -> None:
             & (z_grid <= ice_z_m + effective["window_up_m"])
         )
         values = cleaned[window_mask]
-        if values.size < 10:
+        if values.size < refinement["min_window_pixels"]:
             empty = np.zeros_like(valid_mask, dtype=bool)
             meta = {
                 "raw_mask": empty,
@@ -263,8 +265,8 @@ def install_binary_band_refinement(ns: dict) -> None:
 
             near_ice = (z_max >= ice_z_m - effective["window_down_m"]) and (z_min <= ice_z_m + effective["window_up_m"])
             enough_support = (y_span >= effective["min_y_span_m"]) or (area_m2 >= effective["min_area_m2"])
-            center_line_like = (abs(y_centroid) <= 0.35) and (y_span <= 0.50) and (z_span >= 1.20) and (z_centroid < ice_z_m - 0.20)
-            lower_lobe_like = (z_centroid < ice_z_m - 1.15) and (abs(y_centroid) <= 7.50) and (y_span <= 4.50)
+            center_line_like = (abs(y_centroid) <= refinement["center_reject_abs_y_m"]) and (y_span <= refinement["center_reject_width_m"]) and (z_span >= refinement["center_reject_height_m"]) and (z_centroid < ice_z_m - refinement["center_reject_below_m"])
+            lower_lobe_like = (z_centroid < ice_z_m - refinement["lower_reject_below_m"]) and (abs(y_centroid) <= refinement["lower_reject_abs_y_m"]) and (y_span <= refinement["lower_reject_width_m"])
 
             if near_ice and enough_support and not center_line_like and not lower_lobe_like:
                 final_mask[rows, cols] = True
@@ -274,8 +276,8 @@ def install_binary_band_refinement(ns: dict) -> None:
         final_mask &= window_mask
         raw_mask_before_extension = np.asarray(raw_mask, dtype=bool).copy()
         edge_extension_mask = (
-            _extend_one_side(final_mask, cleaned, valid_mask, y_axis, z_axis, ice_z_m, threshold_low, "left")
-            | _extend_one_side(final_mask, cleaned, valid_mask, y_axis, z_axis, ice_z_m, threshold_low, "right")
+            _extend_one_side(final_mask, cleaned, valid_mask, y_axis, z_axis, ice_z_m, threshold_low, "left", effective["window_up_m"])
+            | _extend_one_side(final_mask, cleaned, valid_mask, y_axis, z_axis, ice_z_m, threshold_low, "right", effective["window_up_m"])
         )
         edge_extension_mask &= valid_mask & np.isfinite(cleaned) & (~final_mask)
         if np.any(edge_extension_mask):
@@ -284,7 +286,7 @@ def install_binary_band_refinement(ns: dict) -> None:
         final_mask &= (
             valid_mask
             & np.isfinite(cleaned)
-            & (z_grid >= ice_z_m - BINARY_EDGE_EXTENSION_DOWN_M)
+            & (z_grid >= ice_z_m - refinement["edge_extension_down_m"])
             & (z_grid <= ice_z_m + effective["window_up_m"])
         )
         bridge_fill_mask = _bridge_short_gaps_in_mask(
@@ -300,7 +302,7 @@ def install_binary_band_refinement(ns: dict) -> None:
             final_mask &= (
                 valid_mask
                 & np.isfinite(cleaned)
-                & (z_grid >= ice_z_m - BINARY_EDGE_EXTENSION_DOWN_M)
+                & (z_grid >= ice_z_m - refinement["edge_extension_down_m"])
                 & (z_grid <= ice_z_m + effective["window_up_m"])
             )
         meta = {
@@ -314,10 +316,10 @@ def install_binary_band_refinement(ns: dict) -> None:
             "threshold_low": threshold_low,
             "effective_window_down_m": effective["window_down_m"],
             "effective_window_up_m": effective["window_up_m"],
-            "edge_extension_down_m": BINARY_EDGE_EXTENSION_DOWN_M,
+            "edge_extension_down_m": refinement["edge_extension_down_m"],
             "bridge_fill_pixels": int(np.count_nonzero(bridge_fill_mask)),
-            "bridge_fill_half_width_m": BINARY_MASK_BRIDGE_HALF_WIDTH_M,
-            "line_connect_max_y_m": BINARY_LINE_CONNECT_MAX_Y_M,
+            "bridge_fill_half_width_m": refinement["mask_bridge_half_width_m"],
+            "line_connect_max_y_m": refinement["line_connect_max_y_m"],
         }
         meta.update(_left_rescue_meta(final_mask, cleaned, y_axis, z_axis, ice_z_m))
         return final_mask, meta

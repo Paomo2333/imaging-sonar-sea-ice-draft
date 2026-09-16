@@ -10,6 +10,9 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 
+from .parameters import parameters_for
+from .postprocessing import add_postprocessing_columns
+
 DRAFT_QC_RESIDUAL_THRESHOLD_M = 0.15
 DRAFT_QC_GOOD_RESIDUAL_M = 0.05
 
@@ -79,7 +82,8 @@ def build_roll_and_curve_tables(ns: dict, ds, curve_records: list[dict]) -> tupl
 
     roll_sign_rows: list[dict] = []
     roll_candidate_cache: dict[int, list[dict]] = {}
-    for sign in [-1, 1]:
+    # Use the calibrated input convention, not a surface-flatness heuristic.
+    for sign in [parameters_for(ns)["attitude"]["roll_sign"]]:
         per_ping: list[dict] = []
         for record in curve_records:
             curve_z = record["curve_z"]
@@ -344,11 +348,12 @@ def build_draft_table(ns: dict, ds, curve_point_rows: list[dict], selected_roll_
     timezone = str(ns.get("TIMEZONE", "UTC"))
     draft_output_dir = ns["OUTPUT_ROOT"] / "05_draft_timeseries"
     draft_output_dir.mkdir(parents=True, exist_ok=True)
-    center_window_m = 0.50
-    min_count = 5
-    fallback_count = 9
-    sonar_center_beam_tilt_from_vertical_deg = 0.0
-    pitch_sign_for_vertical = 1.0
+    parameters = parameters_for(ns)
+    center_window_m = parameters["center"]["half_width_m"]
+    min_count = parameters["center"]["min_points"]
+    fallback_count = parameters["center"]["fallback_points"]
+    sonar_center_beam_tilt_from_vertical_deg = parameters["attitude"]["tilt_from_vertical_deg"]
+    pitch_sign_for_vertical = parameters["attitude"]["pitch_sign"]
 
     by_ping: dict[int, list[dict]] = {}
     for row in curve_point_rows:
@@ -392,29 +397,12 @@ def build_draft_table(ns: dict, ds, curve_point_rows: list[dict], selected_roll_
             "pitch_sign_sensitivity_m": abs((nav_depth - vertical_range_plus) - (nav_depth - vertical_range_minus)),
             **center,
         })
-    df = pd.DataFrame(rows).sort_values("ping_time_unix_s").reset_index(drop=True)
+    df = pd.DataFrame(rows)
     if df.empty:
         return df
+    df = df.sort_values("ping_time_unix_s").reset_index(drop=True)
     df["time_dt"] = pd.to_datetime(df["ping_time_local"])
-    raw_draft = pd.to_numeric(df["ice_draft_m"], errors="coerce")
-    physical_invalid = raw_draft < 0.0
-    baseline_input = raw_draft.mask(physical_invalid)
-    baseline_interp = baseline_input.interpolate(limit_direction="both")
-    df["ice_draft_baseline_m"] = baseline_interp.rolling(window=3, center=True, min_periods=1).median()
-    df["draft_temporal_residual_m"] = raw_draft - df["ice_draft_baseline_m"]
-    residual_invalid = df["draft_temporal_residual_m"].abs() > DRAFT_QC_RESIDUAL_THRESHOLD_M
-    draft_qc_flag = physical_invalid | residual_invalid
-    df["draft_qc_physical_flag"] = physical_invalid.astype(int)
-    df["draft_qc_residual_flag"] = residual_invalid.astype(int)
-    df["draft_qc_flag"] = draft_qc_flag.astype(int)
-    df["draft_qc_reason"] = np.where(
-        physical_invalid,
-        "negative_draft",
-        np.where(residual_invalid, "temporal_residual", ""),
-    )
-    qc_input = raw_draft.mask(draft_qc_flag).interpolate(limit_direction="both")
-    df["ice_draft_qc_input_m"] = qc_input
-    df["ice_draft_smoothed_m"] = qc_input.rolling(window=3, center=True, min_periods=1).median()
+    df = add_postprocessing_columns(df, parameters["postprocess"])
     fieldnames = [
         "ping", "ping_time_unix_s", "ping_time_local", "nav_depth_m", "nav_altitude_m",
         "pitch_filtered_deg", "roll_filtered_deg", "nav_heading_deg", "roll_sign",
@@ -429,17 +417,19 @@ def build_draft_table(ns: dict, ds, curve_point_rows: list[dict], selected_roll_
         "center_z_s_m", "center_weight_sum",
     ]
     ns["write_csv"](draft_output_dir / "ice_draft_centerline_summary.csv", df.drop(columns=["time_dt"]).to_dict("records"), fieldnames)
-    save_draft_figure(draft_output_dir / "ice_draft_time_series_with_auv_depth.png", df, ns["BATCH_PINGS"])
+    save_draft_figure(draft_output_dir / "ice_draft_time_series_with_auv_depth.png", df, ns["BATCH_PINGS"], parameters)
     return df
 
 
-def save_draft_figure(output_path: Path, df: pd.DataFrame, batch_pings: list[int]) -> None:
+def save_draft_figure(output_path: Path, df: pd.DataFrame, batch_pings: list[int], parameters=None) -> None:
+    parameters = parameters or parameters_for({})
+    post = parameters["postprocess"]
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(2, 1, figsize=(11.5, 6.8), dpi=150, sharex=True, constrained_layout=True)
     ax_draft, ax_depth = axes
     ax_draft.plot(df["time_dt"], df["ice_draft_m"], color="0.68", marker="o", markersize=3.8, linewidth=1.0, label="raw centerline draft")
-    ax_draft.plot(df["time_dt"], df["ice_draft_smoothed_m"], color="#1f77b4", marker="o", markersize=4.4, linewidth=1.8, label="3-point median draft")
+    ax_draft.plot(df["time_dt"], df["ice_draft_smoothed_m"], color="#1f77b4", marker="o", markersize=4.4, linewidth=1.8, label=f"processed draft ({post['smooth_window_points']}-point median)" if post["enabled"] else "raw draft (postprocessing off)")
     ax_draft.fill_between(
         df["time_dt"],
         df["ice_draft_smoothed_m"] - 0.5 * df["center_z_roll_corrected_iqr_m"].fillna(0.0),
@@ -455,7 +445,7 @@ def save_draft_figure(output_path: Path, df: pd.DataFrame, batch_pings: list[int
             facecolors="none",
             edgecolors="#c44e52",
             linewidths=1.2,
-            label=f"QC residual > {DRAFT_QC_RESIDUAL_THRESHOLD_M:.2f} m or draft < 0",
+            label=f"QC residual > {post['residual_threshold_m']:.2f} m or draft < 0",
         )
     ax_draft.axhline(0.0, color="0.25", linewidth=0.9, linestyle="--")
     ax_draft.set_ylabel("Ice draft (m)", fontname="Arial")
@@ -472,7 +462,7 @@ def save_draft_figure(output_path: Path, df: pd.DataFrame, batch_pings: list[int
     ax_depth.legend(loc="best", fontsize=8, frameon=True)
     ax_depth.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
     fig.suptitle(
-        f"Sea-ice draft MVP | pings {batch_pings[0]}-{batch_pings[-1]} | center window +/-0.50 m",
+        f"Sea-ice draft | pings {batch_pings[0]}-{batch_pings[-1]} | center half-window {parameters['center']['half_width_m']:.2f} m",
         y=1.02,
         fontname="Arial",
     )

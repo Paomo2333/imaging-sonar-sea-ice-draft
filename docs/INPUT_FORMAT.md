@@ -33,9 +33,15 @@ This variable layout matches the NetCDF output currently produced by
 `oculus-python`; metadata and dimension order should still be inspected for
 each software and sonar version.
 
+Read [COORDINATES.md](COORDINATES.md) before processing. The canonical sonar
+frame is forward/port/up. Select the correct source column order with
+`grid.beam_order`; verify sound-speed/range calibration before changing
+`grid.range_scale`. Nonuniform beam bearings require a suitable input adapter.
+
 ## Synchronized AUV motion CSV
 
-The motion file must contain `time_unix_s` and should contain:
+For draft reconstruction supply `time_unix_s`, `NAV_DEPTH`,
+`roll_filtered_deg` and `pitch_filtered_deg`. Other fields provide optional context:
 
 | Column | Unit | Use |
 | --- | --- | --- |

@@ -31,6 +31,7 @@ import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 
+from .parameters import load_parameters, configure_mapping, configure_binary_candidates, parameters_for
 from .algorithm_cells import get_cell_source
 from .artifact_suppression import install_gray_denoising
 from .draft_reconstruction import (
@@ -80,6 +81,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Reconstruct along-track sea-ice draft from upward-looking 2D imaging-sonar NetCDF data."
     )
+    parser.add_argument("--algorithm-config", default=None, help="JSON algorithm settings; omitted keys use initial values. Verify geometry before processing.")
     parser.add_argument("--nc-file", required=True, help="NetCDF file to process.")
     parser.add_argument("--motion-file", required=True, help="CSV file containing synchronized AUV motion and depth data.")
     parser.add_argument("--output-root", required=True, help="Output directory; relative paths are resolved from the current directory.")
@@ -125,7 +127,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--force-retune",
         action="store_true",
-        help="Ignore existing selected config cache files and rerun gray/binary tuning.",
+        help="Compatibility option; parameter selection is evaluated afresh on every run.",
     )
     parser.add_argument(
         "--binary-tuning-workers",
@@ -264,7 +266,7 @@ def install_metadata_range_mapping(
             valid_mask=mapped["valid_mask"],
             y_axis_m=mapped["y_axis_m"],
             z_axis_m=mapped["z_axis_m"],
-            max_fill_distance_m=0.15,
+            max_fill_distance_m=parameters_for(ns)["grid"]["hole_fill_max_distance_m"],
         )
         metadata = dict(metadata)
         metadata["grid_range_max_m"] = float(ping_grid_config.range_max_m)
@@ -670,6 +672,7 @@ def init_binary_tuning_worker(payload: dict) -> None:
     os.chdir(NOTEBOOK_DIR)
     ns: dict = {"__name__": "__binary_tuning_worker__"}
     execute_notebook_cell(ns, 2)
+    configure_mapping(ns, payload["algorithm_parameters"])
     ns["NC_FILE"] = Path(payload["nc_file"])
     ns["OUTPUT_ROOT"] = Path(payload["output_root"])
     ns["OUTPUT_DIR"] = Path(payload["output_dir"])
@@ -689,6 +692,7 @@ def init_binary_tuning_worker(payload: dict) -> None:
         range_round_m=float(payload["grid_range_round_m"]),
     )
     execute_notebook_cell(ns, 21)
+    configure_binary_candidates(ns)
     install_binary_band_refinement(ns)
     install_publication_binary_renderer(ns)
     _BINARY_TUNING_WORKER_NS = ns
@@ -739,6 +743,7 @@ def tune_binary_config(
             "grid_range_max_cap_m": ns["GRID_RANGE_MAX_CAP_M"],
             "grid_range_round_m": ns["GRID_RANGE_ROUND_M"],
             "selected_config": selected_config,
+            "algorithm_parameters": parameters_for(ns),
         }
         completed = 0
         with ProcessPoolExecutor(
@@ -963,6 +968,7 @@ def process_gray_only_pings(ns: dict, ds, selected_config: dict, save_gray_figur
 
 def main() -> None:
     args = parse_args()
+    algorithm_parameters = load_parameters(args.algorithm_config)
     nc_file = Path(args.nc_file).expanduser().resolve()
     motion_file = Path(args.motion_file).expanduser().resolve()
     if not nc_file.is_file():
@@ -974,6 +980,9 @@ def main() -> None:
         output_root = Path.cwd() / output_root
     output_root = output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    (output_root / "effective_config.json").write_text(json.dumps({"algorithm": algorithm_parameters, "run": vars(args)}, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("Check calibration: right-handed sonar x forward, y port, z upward; verify beam order and attitude signs.")
+    print(f"- parameter selection: {algorithm_parameters['selection']['mode']}")
 
     old_cwd = Path.cwd()
     os.chdir(NOTEBOOK_DIR)
@@ -987,6 +996,7 @@ def main() -> None:
     }
     try:
         execute_notebook_cell(ns, 2)
+        configure_mapping(ns, algorithm_parameters)
         ns["NC_FILE"] = nc_file
         ns["MOTION_FILE"] = motion_file
         ns["TIMEZONE"] = str(args.timezone)
@@ -1099,38 +1109,28 @@ def main() -> None:
             ns["MANUAL_MASK_JSON"] = manual_mask_path
         manual_store = ns["load_manual_mask_store"](ns["MANUAL_MASK_JSON"])
         execute_notebook_cell(ns, 21)
+        configure_binary_candidates(ns)
         install_binary_band_refinement(ns)
         install_publication_binary_renderer(ns)
 
-        selected_gray_config = None
-        if not args.force_retune:
-            selected_gray_config = load_selected_config_cache(
-                ns["OUTPUT_DIR"] / "selected_global_config.json",
-                ns["CANDIDATE_CONFIGS"],
-                "gray",
-            )
-        if selected_gray_config is None:
-            selected_gray_config, gray_global_rows = score_gray_configs(ns, ds, batch_pings)
-        else:
-            gray_global_rows = []
-
-        selected_binary_config = None
-        if not args.force_retune:
-            selected_binary_config = load_selected_config_cache(
-                ns["BINARY_OUTPUT_DIR"] / "binary_selected_global_config.json",
-                ns["BINARY_CANDIDATE_CONFIGS"],
-                "binary",
-            )
-        if selected_binary_config is None:
-            selected_binary_config, binary_global_rows = tune_binary_config(
-                ns,
-                ds,
-                selected_gray_config,
-                manual_store,
+        # Explicit settings take precedence over any previous run's cache.
+        selected_gray_config = dict(ns["CANDIDATE_CONFIGS"][0])
+        if algorithm_parameters["selection"]["mode"] == "tune":
+            selected_binary_config, _ = tune_binary_config(
+                ns, ds, selected_gray_config, manual_store,
                 worker_count=int(args.binary_tuning_workers),
             )
         else:
-            binary_global_rows = []
+            selected_binary_config = dict(ns["BINARY_CANDIDATE_CONFIGS"][0])
+        effective = {"algorithm": algorithm_parameters, "run": vars(args),
+                     "selected_gray_config": selected_gray_config,
+                     "selected_binary_config": selected_binary_config}
+        (output_root / "effective_config.json").write_text(json.dumps(effective, ensure_ascii=False, indent=2), encoding="utf-8")
+        for config_dir, config_name, config_value in [
+            (ns["OUTPUT_DIR"], "selected_global_config.json", selected_gray_config),
+            (ns["BINARY_OUTPUT_DIR"], "binary_selected_global_config.json", selected_binary_config),
+        ]:
+            (config_dir / config_name).write_text(json.dumps({"selected_config": config_value}, indent=2), encoding="utf-8")
         gray_rows, manual_rows, binary_rows, curve_records = process_selected_pings(
             ns,
             ds,

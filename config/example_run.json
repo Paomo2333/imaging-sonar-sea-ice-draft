@@ -11,5 +11,6 @@
   "binary_tuning_ping_step": 3,
   "binary_tuning_workers": 1,
   "no_process_figures": true,
-  "no_gray_figures": true
+  "no_gray_figures": true,
+  "algorithm_config": "initial_parameters.json"
 }

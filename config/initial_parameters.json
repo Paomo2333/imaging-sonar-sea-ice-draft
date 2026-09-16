@@ -1,0 +1,156 @@
+{
+  "grid": {
+    "grid_resolution_m": 0.05,
+    "range_min_m": 0.0,
+    "azimuth_half_angle_deg": 65.0,
+    "vertical_aperture_deg": 20.0,
+    "interpolation": "linear",
+    "beam_order": "starboard_to_port",
+    "range_scale": 1.0,
+    "hole_fill_max_distance_m": 0.15
+  },
+  "background": {
+    "bin_m": 0.25,
+    "low_q": 35.0,
+    "high_q": 74.0,
+    "iqr_gain": 0.55,
+    "smooth_bins": 5,
+    "min_bin_pixels": 25,
+    "normalization_q": 99.0
+  },
+  "gray": {
+    "weak_floor": 0.13,
+    "post_floor": 0.1,
+    "center_min_level": 0.32,
+    "center_attenuation": 0.02,
+    "lobe_attenuation": 0.05
+  },
+  "denoising": {
+    "ice_min_z_m": 6.0,
+    "ice_band_half_width_m": 0.55,
+    "center_half_width_m": 0.34,
+    "center_half_angle_deg": 2.4,
+    "center_reference_z_m": 1.0,
+    "center_side_inner_m": 0.52,
+    "center_side_outer_m": 1.55,
+    "center_side_percentile": 70.0,
+    "center_excess": 0.1,
+    "center_side_preserve_level": 0.55,
+    "center_below_margin_m": 0.15,
+    "lobe_z_margin_m": 1.25,
+    "lobe_top_margin_m": 0.45,
+    "lobe_max_width_m": 7.0,
+    "lobe_max_area_m2": 1.2,
+    "lobe_min_pixels": 20,
+    "lobe_closing_rows": 3,
+    "lobe_closing_cols": 5,
+    "component_threshold": 0.24,
+    "projection_pixel_threshold": 0.35,
+    "projection_energy_weight": 0.65,
+    "projection_support_weight": 0.35,
+    "projection_sigma_m": 0.15,
+    "below_ice_margin_min_m": 1.4,
+    "below_ice_margin_max_m": 4.2,
+    "below_ice_margin_base_m": 1.5,
+    "below_ice_margin_gap_gain_m": 1.2,
+    "below_ice_margin_roughness_gain": 1.8,
+    "above_ice_margin_min_m": 1.8,
+    "above_ice_margin_max_m": 5.8,
+    "above_ice_margin_base_m": 2.0,
+    "above_ice_margin_gap_gain_m": 1.2,
+    "above_ice_margin_roughness_gain": 1.4,
+    "curve_center_protect_m": 0.75,
+    "curve_center_min_level": 0.035
+  },
+  "guidance": {
+    "iterations": 2,
+    "annular_trigger_score": 0.24
+  },
+  "binary": {
+    "high_q": 86.0,
+    "low_q": 66.0,
+    "window_down_m": 1.2,
+    "window_up_m": 0.6,
+    "closing_y_m": 0.25,
+    "closing_z_m": 0.08,
+    "opening_y_m": 0.05,
+    "opening_z_m": 0.05,
+    "min_area_m2": 0.03,
+    "min_y_span_m": 0.65,
+    "hole_area_m2": 0.03
+  },
+  "binary_refinement": {
+    "edge_extension_down_m": 1.7,
+    "edge_extension_max_y_m": 4.5,
+    "edge_extension_step_z_m": 0.35,
+    "edge_extension_half_width_m": 0.12,
+    "edge_extension_max_misses": 8,
+    "edge_min_intensity": 0.35,
+    "edge_threshold_scale": 0.9,
+    "gap_connect_max_y_m": 1.8,
+    "gap_connect_max_z_m": 0.35,
+    "mask_bridge_half_width_m": 0.1,
+    "mask_bridge_support_scale": 0.4,
+    "mask_bridge_support_min": 0.12,
+    "mask_bridge_support_fraction": 0.2,
+    "line_connect_max_y_m": 0.6,
+    "line_connect_max_z_m": 0.35,
+    "min_window_pixels": 10,
+    "center_reject_abs_y_m": 0.35,
+    "center_reject_width_m": 0.5,
+    "center_reject_height_m": 1.2,
+    "center_reject_below_m": 0.2,
+    "lower_reject_below_m": 1.15,
+    "lower_reject_abs_y_m": 7.5,
+    "lower_reject_width_m": 4.5
+  },
+  "selection": {
+    "mode": "fixed",
+    "high_q": [
+      82.0,
+      86.0,
+      88.0
+    ],
+    "low_q": [
+      58.0,
+      62.0,
+      66.0
+    ],
+    "window_down_m": [
+      1.2,
+      1.35
+    ],
+    "window_up_m": [
+      0.6,
+      0.7
+    ],
+    "closing_y_m": [
+      0.25,
+      0.45,
+      0.65
+    ],
+    "closing_z_m": [
+      0.08,
+      0.12,
+      0.16
+    ]
+  },
+  "attitude": {
+    "roll_sign": 1,
+    "pitch_sign": 1,
+    "tilt_from_vertical_deg": 0.0
+  },
+  "center": {
+    "half_width_m": 0.5,
+    "min_points": 5,
+    "fallback_points": 9
+  },
+  "postprocess": {
+    "enabled": true,
+    "residual_threshold_m": 0.15,
+    "baseline_window_points": 3,
+    "smooth_window_points": 3,
+    "interpolate": true,
+    "max_gap_s": null
+  }
+}

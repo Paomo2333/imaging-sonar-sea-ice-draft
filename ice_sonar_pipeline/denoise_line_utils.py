@@ -56,6 +56,18 @@ ABOVE_ICE_MARGIN_ROUGHNESS_GAIN = 1.4
 CURVE_CENTER_PROTECT_M = 0.75
 CURVE_CENTER_MIN_LEVEL = 0.035
 
+# Additional exposed geometric and projection settings (configured per CLI run).
+CENTER_REFERENCE_Z_M = 1.0
+CENTER_BELOW_MARGIN_M = 0.15
+LOBE_TOP_MARGIN_M = 0.45
+LOBE_MAX_AREA_M2 = 1.2
+LOBE_MIN_PIXELS = 20
+LOBE_CLOSING_ROWS = 3
+LOBE_CLOSING_COLS = 5
+PROJECTION_ENERGY_WEIGHT = 0.65
+PROJECTION_SUPPORT_WEIGHT = 0.35
+PROJECTION_SIGMA_M = 0.15
+
 GRAY_CONFIGS = [
     {"name": "conservative", "weak_floor": 0.05, "post_floor": 0.04, "center_min_level": 0.25, "center_attenuation": 0.35, "lobe_attenuation": 0.45},
     {"name": "balanced", "weak_floor": 0.08, "post_floor": 0.06, "center_min_level": 0.25, "center_attenuation": 0.22, "lobe_attenuation": 0.30},
@@ -232,7 +244,7 @@ def normalized_profile(values: np.ndarray) -> np.ndarray:
 
 
 def center_artifact_core_mask(y_grid: np.ndarray, z_grid: np.ndarray) -> np.ndarray:
-    angular_half_width = np.tan(np.deg2rad(CENTER_HALF_ANGLE_DEG)) * np.maximum(z_grid, 1.0)
+    angular_half_width = np.tan(np.deg2rad(CENTER_HALF_ANGLE_DEG)) * np.maximum(z_grid, CENTER_REFERENCE_Z_M)
     half_width = np.maximum(CENTER_HALF_WIDTH_M, angular_half_width)
     return np.abs(y_grid) <= half_width
 
@@ -241,9 +253,10 @@ def compute_z_projection(image: np.ndarray, valid_mask: np.ndarray, z_axis: np.n
     finite = valid_mask & np.isfinite(image)
     projection_sum = np.nansum(np.where(finite, image, 0.0), axis=1)
     projection_count = np.sum(finite & (image >= PROJECTION_PIXEL_THRESHOLD), axis=1).astype(float)
-    projection_score = 0.65 * normalized_profile(projection_sum) + 0.35 * normalized_profile(projection_count)
-    smooth_sigma = max(1.0, 0.45 / max(abs(dz_m), 1e-6) / 3.0)
-    projection_smooth = gaussian_filter1d(np.nan_to_num(projection_score, nan=0.0), sigma=smooth_sigma, mode="nearest")
+    weight_sum = PROJECTION_ENERGY_WEIGHT + PROJECTION_SUPPORT_WEIGHT
+    projection_score = (PROJECTION_ENERGY_WEIGHT * normalized_profile(projection_sum) + PROJECTION_SUPPORT_WEIGHT * normalized_profile(projection_count)) / weight_sum
+    smooth_sigma = max(1.0, PROJECTION_SIGMA_M / max(abs(dz_m), 1e-6)) if PROJECTION_SIGMA_M > 0 else 0.0
+    projection_smooth = gaussian_filter1d(np.nan_to_num(projection_score, nan=0.0), sigma=smooth_sigma, mode="nearest") if smooth_sigma > 0 else np.nan_to_num(projection_score, nan=0.0)
     return projection_score, projection_smooth
 
 
@@ -332,17 +345,17 @@ def run_unified_noise_suppression(
         & np.isfinite(cleaned)
         & (cleaned > center_threshold[:, None])
         & (side_support[:, None] < CENTER_SIDE_PRESERVE_LEVEL)
-        & (z_grid < ice_z - 0.15)
+        & (z_grid < ice_z - CENTER_BELOW_MARGIN_M)
     )
     cleaned[center_artifact_mask] = cleaned[center_artifact_mask] * config["center_attenuation"]
 
     binary = valid_mask & np.isfinite(cleaned) & (cleaned >= COMPONENT_THRESHOLD)
-    binary = binary_closing(binary, structure=np.ones((3, 5), dtype=bool))
+    binary = binary_closing(binary, structure=np.ones((LOBE_CLOSING_ROWS, LOBE_CLOSING_COLS), dtype=bool))
     component_labels, component_count = label(binary)
     lobe_mask = np.zeros_like(binary, dtype=bool)
     for idx in range(1, component_count + 1):
         rows, cols = np.where(component_labels == idx)
-        if rows.size < 20:
+        if rows.size < LOBE_MIN_PIXELS:
             continue
         z_values = z_axis[rows]
         y_values = y_axis[cols]
@@ -350,8 +363,8 @@ def run_unified_noise_suppression(
         z_centroid = float(np.nanmedian(z_values))
         y_width = float(np.nanmax(y_values) - np.nanmin(y_values)) if y_values.size else 0.0
         area_m2 = float(rows.size * abs(context["dy"]) * abs(context["dz"]))
-        below_ice = (z_max < ice_z - 0.45) or (z_centroid < ice_z - LOBE_Z_MARGIN_M)
-        compact_or_low = (y_width <= LOBE_MAX_WIDTH_M) or (area_m2 < 1.2)
+        below_ice = (z_max < ice_z - LOBE_TOP_MARGIN_M) or (z_centroid < ice_z - LOBE_Z_MARGIN_M)
+        compact_or_low = (y_width <= LOBE_MAX_WIDTH_M) or (area_m2 < LOBE_MAX_AREA_M2)
         center_column_like = (abs(float(np.nanmedian(y_values))) <= CENTER_HALF_WIDTH_M * 1.8) and (y_width <= 1.2)
         if below_ice and (compact_or_low or center_column_like):
             lobe_mask[rows, cols] = True
@@ -412,6 +425,8 @@ def adaptive_range_threshold(
     high_q: float = 74.0,
     iqr_gain: float = 0.55,
     smooth_bins: int = 5,
+    min_bin_pixels: int = 25,
+    normalization_q: float = 99.0,
 ) -> tuple[np.ndarray, dict]:
     finite = np.isfinite(image) & valid_mask
     if finite.sum() == 0:
@@ -428,7 +443,7 @@ def adaptive_range_threshold(
 
     for i in range(len(centers)):
         m = finite & (bin_index == i)
-        if m.sum() < 25:
+        if m.sum() < min_bin_pixels:
             continue
         values = image[m]
         lo = np.nanpercentile(values, low_q)
@@ -446,7 +461,7 @@ def adaptive_range_threshold(
 
     residual = np.maximum(image - threshold_map, 0.0)
     residual[~finite] = 0.0
-    normalized = normalize_positive(residual, finite, q=99.0)
+    normalized = normalize_positive(residual, finite, q=normalization_q)
     return normalized, {
         "range_bin_count": int(len(centers)),
         "threshold_median": float(np.nanmedian(thresholds)) if good.sum() else float("nan"),
@@ -1820,7 +1835,7 @@ def save_frame_diagnostic(result: FrameResult, output_path: str | Path) -> None:
     ax_projection.legend(loc="lower right", fontsize=8)
 
     for ax in [ax_input, ax_output, ax_mask]:
-        ax.set_xlabel("y_s right / cross-track (m)")
+        ax.set_xlabel("y_s port / cross-track (m)")
         ax.set_ylabel("z_s center-beam forward (m)")
         ax.grid(True, color="0.25", linestyle=":", linewidth=0.6, alpha=0.45)
 
@@ -1889,7 +1904,7 @@ def save_dp_ridge_diagnostic(result: FrameResult, dp_result: dict, output_path: 
         if np.any(observed):
             ax_curve.scatter(np.asarray(dp_result["line_y"])[observed], np.asarray(dp_result["line_z"])[observed], s=8, color="#FF4B6E", alpha=0.7)
     ax_curve.set_title("Curve comparison")
-    ax_curve.set_xlabel("y_s right / cross-track (m)")
+    ax_curve.set_xlabel("y_s port / cross-track (m)")
     ax_curve.set_ylabel("z_s center-beam forward (m)")
     ax_curve.grid(True, color="0.85", linestyle=":", linewidth=0.7)
     ax_curve.legend(loc="best", fontsize=8)
@@ -1916,7 +1931,7 @@ def save_dp_ridge_diagnostic(result: FrameResult, dp_result: dict, output_path: 
     ax_metrics.set_title("DP path QC")
 
     for ax in [ax_img, ax_score]:
-        ax.set_xlabel("y_s right / cross-track (m)")
+        ax.set_xlabel("y_s port / cross-track (m)")
         ax.set_ylabel("z_s center-beam forward (m)")
         ax.grid(True, color="0.25", linestyle=":", linewidth=0.6, alpha=0.45)
 

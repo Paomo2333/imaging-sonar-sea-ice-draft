@@ -7,6 +7,8 @@ import shutil
 import numpy as np
 import pandas as pd
 
+from .parameters import parameters_for
+
 DRAFT_QC_RESIDUAL_THRESHOLD_M = 0.15
 DRAFT_QC_GOOD_RESIDUAL_M = 0.05
 
@@ -30,6 +32,7 @@ def badness_low(values, good_level, bad_level):
 
 
 def build_qc_table(ns: dict, gray_rows: list[dict], manual_rows: list[dict], binary_rows: list[dict], roll_rows: list[dict], draft_df: pd.DataFrame) -> pd.DataFrame:
+    residual_threshold = parameters_for(ns)["postprocess"]["residual_threshold_m"]
     qc_dir = ns["OUTPUT_ROOT"] / "06_qc_dashboard"
     qc_dir.mkdir(parents=True, exist_ok=True)
     qc_df = pd.DataFrame(binary_rows).copy()
@@ -76,7 +79,7 @@ def build_qc_table(ns: dict, gray_rows: list[dict], manual_rows: list[dict], bin
     draft_bad = badness_high(
         np.abs(qc_df.get("draft_temporal_residual_m", pd.Series(0.0, index=qc_df.index)).fillna(0.0)),
         good_level=DRAFT_QC_GOOD_RESIDUAL_M,
-        bad_level=DRAFT_QC_RESIDUAL_THRESHOLD_M,
+        bad_level=residual_threshold,
     )
     if "draft_qc_physical_flag" in qc_df.columns:
         draft_bad = np.maximum(draft_bad, qc_df["draft_qc_physical_flag"].fillna(0).to_numpy(dtype=float))
